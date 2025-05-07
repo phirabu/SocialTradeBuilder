@@ -39,8 +39,6 @@ import {
   formatInvalidCommandReply,
   postTradeNotification
 } from "./services/twitter";
-import { processMentionWebhook, processDMWebhook } from "./services/twitterWebhook";
-import { initMentionPolling } from "./services/twitterPoller";
 import { TwitterApi } from "twitter-api-v2";
 import { getLatestUserTweet } from "./services/twitter";
 
@@ -68,29 +66,9 @@ const processCommandSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Initialize Twitter mention polling if environment variables are set
-  // try {
-  //   if (process.env.TWITTER_API_KEY && process.env.TWITTER_BEARER_TOKEN) {
-  //     // Start polling for Twitter mentions with 30 second interval
-  //     // This will use smart exponential backoff when rate limited
-  //     initMentionPolling(30);
-  //     console.log("Twitter mention smart polling initialized");
-  //   } else {
-  //     console.log("Twitter polling disabled: API credentials not found");
-  //   }
-  // } catch (error) {
-  //   console.error("Failed to initialize Twitter polling:", error);
-  // }
-  
   // prefix all routes with /api
   const apiRouter = express.Router();
   app.use("/api", apiRouter);
-  
-  // Twitter webhook endpoints
-  apiRouter.post("/twitter/webhook/mentions", processMentionWebhook);
-  apiRouter.post("/twitter/webhook/dm", processDMWebhook);
-  // CRC verification endpoint
-  apiRouter.get("/twitter/webhook/mentions", processMentionWebhook);
   
   // Process pending tweets for a bot
   apiRouter.post("/process-pending-tweets", async (req: Request, res: Response) => {
@@ -394,46 +372,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.get("/twitter/latest-tweet", async (req: Request, res: Response) => {
     try {
       const username = req.query.username as string || "phirabudigital";
-      
       if (!username) {
-        return res.status(400).json({ message: "Username is required" });
+        return res.status(400).json({ error: "missing_username", message: "Username is required" });
       }
-      
-      // First check if we have a recent tweet in our database
+
+      // Check for Twitter API credentials
+      if (!process.env.TWITTER_API_KEY || !process.env.TWITTER_BEARER_TOKEN) {
+        return res.status(503).json({
+          error: "missing_credentials",
+          message: "Twitter API credentials are not configured"
+        });
+      }
+
       let latestTweet = await storage.getLatestTweet();
-      
-      // Only fetch from Twitter API if:
-      // 1. We have no tweets in DB, or
-      // 2. The latest tweet is older than 5 minutes, or
-      // 3. The force=true query param is set
       const forceRefresh = req.query.force === 'true';
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      
+      let errorToReturn = null;
+
       if (forceRefresh || !latestTweet || new Date(latestTweet.createdAt) < fiveMinutesAgo) {
         console.log(`[DEBUG] Fetching latest tweet for user @${username} (force: ${forceRefresh})`);
         try {
           const tweet = await getLatestUserTweet(username);
-          
           if (tweet) {
             console.log(`[DEBUG] Got tweet from Twitter API - ID: ${tweet.id}, Text: ${tweet.text}`);
-            // Check if this tweet is already in our database
             const existingTweet = await storage.getTweetByTweetId(tweet.id);
-            
             if (!existingTweet) {
-              console.log(`[DEBUG] Tweet ${tweet.id} not found in database, creating new record...`);
-              // Try to find the bot by username first
               let botId = null;
-              
               try {
-                // Find all bots
                 const bots = await storage.listBots();
-                // Find the bot whose Twitter username matches 
-                // either the author OR is mentioned in the tweet
                 const matchingBot = bots.find(b => 
                   b.twitterUsername.toLowerCase() === username.toLowerCase() || 
                   tweet.text.toLowerCase().includes(`@${b.twitterUsername.toLowerCase()}`)
                 );
-                
                 if (matchingBot) {
                   botId = matchingBot.id;
                   console.log(`Found matching bot ID ${botId} for tweet from ${username}`);
@@ -441,8 +411,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               } catch (err) {
                 console.error("Error finding matching bot:", err);
               }
-              
-              // Store the new tweet in our database with the bot ID if found
               latestTweet = await storage.createTweet({
                 tweetId: tweet.id,
                 tweetText: tweet.text,
@@ -452,41 +420,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 processingStatus: "pending"
               });
             } else {
-              // Use the existing tweet from our database
               latestTweet = existingTweet;
             }
+          } else {
+            // No tweet found, return a structured error
+            errorToReturn = { error: "not_found", message: "No tweet found or user does not exist." };
           }
         } catch (twitterError: any) {
           console.error("Twitter API error:", twitterError);
-          
-          // If we hit rate limits, and we have a tweet in DB, return that instead
-          if (latestTweet && twitterError.code === 429) {
-            return res.status(200).json({
-              ...latestTweet,
-              _notice: "Rate limited by Twitter API. Showing cached tweet."
+          // Rate limit error
+          if (twitterError.code === 429) {
+            return res.status(429).json({
+              error: "rate_limited",
+              message: twitterError.message || "Twitter API rate limit reached. Please try again later.",
+              rateLimitReset: twitterError.rateLimit?.reset
             });
           }
-          
-          // Otherwise, return the Twitter API error
-          return res.status(twitterError.code || 500).json({ 
-            message: `Twitter API error: ${twitterError.message || "Unknown error"}`,
-            rateLimited: twitterError.code === 429
+          // Missing credentials
+          if (twitterError.message && twitterError.message.includes("Missing TWITTER_BEARER_TOKEN")) {
+            return res.status(503).json({
+              error: "missing_credentials",
+              message: "Twitter API credentials are missing on the server."
+            });
+          }
+          // Unknown error
+          return res.status(500).json({
+            error: "unknown",
+            message: twitterError.message || "Unknown error occurred."
           });
         }
       }
-      
-      if (!latestTweet) {
-        return res.status(404).json({ message: "No tweets found" });
+
+      if (errorToReturn) {
+        return res.status(404).json(errorToReturn);
       }
-      
+
+      if (!latestTweet) {
+        return res.status(404).json({ error: "not_found", message: "No tweets found" });
+      }
+
       res.json(latestTweet);
     } catch (error: any) {
       console.error("Failed to fetch latest tweet:", error);
-      res.status(500).json({ message: error.message || "Failed to fetch latest tweet" });
+      res.status(500).json({ error: "unknown", message: error.message || "Failed to fetch latest tweet" });
     }
   });
-
-
 
   // Get all bots with enhanced data
   apiRouter.get("/bots", async (_req: Request, res: Response) => {
@@ -537,7 +515,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ bots: enhancedBots });
     } catch (error) {
       console.error("Failed to fetch bots:", error);
-      res.status(500).json({ message: "Failed to fetch bots" });
+      // Return empty array instead of error
+      res.json({ bots: [] });
     }
   });
 

@@ -236,13 +236,13 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
   try {
     console.log(`[TWITTER] Getting latest tweet for user @${username}`);
     
-    // Check if we're rate limited for user_timeline
+    // Log current rate limit state
     if (isRateLimited('user_timeline')) {
       console.log('[TWITTER] Rate limited for user_timeline, returning null');
       return null;
     }
     
-    // Check if Twitter Bearer Token is available
+    // Log missing credentials
     if (!process.env.TWITTER_BEARER_TOKEN) {
       console.error('[TWITTER] Missing TWITTER_BEARER_TOKEN environment variable');
       return null;
@@ -252,41 +252,48 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
     const appOnlyClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN);
     const readOnlyClient = appOnlyClient.readOnly;
     
-    // First, get the user ID from the username
+    // Log before API call
+    console.log(`[TWITTER] Fetching user by username: ${username}`);
     const user = await readOnlyClient.v2.userByUsername(username);
     if (!user.data) {
-      console.log(`[TWITTER] User @${username} not found`);
+      console.log(`[TWITTER] User @${username} not found. API response:`, JSON.stringify(user));
       return null;
     }
     
-    // Get the user's recent tweets
+    // Log user ID
+    console.log(`[TWITTER] User ID for @${username}: ${user.data.id}`);
+    
+    // Log before fetching timeline
+    console.log(`[TWITTER] Fetching timeline for user ID: ${user.data.id}`);
     const tweets = await readOnlyClient.v2.userTimeline(user.data.id, {
       max_results: 5,
       "tweet.fields": ["created_at", "author_id", "conversation_id"],
       exclude: ["retweets", "replies"]
     });
     
+    // Log tweets response
+    console.log(`[TWITTER] Tweets API response:`, JSON.stringify(tweets));
+    
     // Handle rate limiting
     if (tweets.rateLimit) {
       const remainingSeconds = tweets.rateLimit.reset - Math.floor(Date.now()/1000);
       console.log(`[TWITTER] Rate limit info for user_timeline: ${tweets.rateLimit.limit}/${tweets.rateLimit.remaining} (resets in ${remainingSeconds} seconds)`);
-      
-      // Check if we're close to hitting the rate limit
       if (tweets.rateLimit.remaining <= 5) {
         updateRateLimit('user_timeline', tweets.rateLimit.reset, true);
       }
     }
     
-    // Get the first tweet (most recent)
-    const latestTweet = tweets.data.data[0];
-    if (latestTweet) {
+    // Log found tweets
+    if (tweets.data && tweets.data.data && tweets.data.data.length > 0) {
+      const latestTweet = tweets.data.data[0];
       console.log(`[TWITTER] Found latest tweet for @${username}: "${latestTweet.text.substring(0, 50)}..."`);
       return latestTweet;
     } else {
       console.log(`[TWITTER] No tweets found for @${username}`);
       return null;
     }
-  } catch (error) {
+  } catch (error: any) {
+    console.error(`[TWITTER] Error in getLatestUserTweet for @${username}:`, error && error.stack ? error.stack : error);
     handleTwitterError(error, 'user_timeline');
     return null;
   }
