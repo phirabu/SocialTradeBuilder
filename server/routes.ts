@@ -69,18 +69,18 @@ const processCommandSchema = z.object({
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize Twitter mention polling if environment variables are set
-  try {
-    if (process.env.TWITTER_API_KEY && process.env.TWITTER_BEARER_TOKEN) {
-      // Start polling for Twitter mentions with 30 second interval
-      // This will use smart exponential backoff when rate limited
-      initMentionPolling(30);
-      console.log("Twitter mention smart polling initialized");
-    } else {
-      console.log("Twitter polling disabled: API credentials not found");
-    }
-  } catch (error) {
-    console.error("Failed to initialize Twitter polling:", error);
-  }
+  // try {
+  //   if (process.env.TWITTER_API_KEY && process.env.TWITTER_BEARER_TOKEN) {
+  //     // Start polling for Twitter mentions with 30 second interval
+  //     // This will use smart exponential backoff when rate limited
+  //     initMentionPolling(30);
+  //     console.log("Twitter mention smart polling initialized");
+  //   } else {
+  //     console.log("Twitter polling disabled: API credentials not found");
+  //   }
+  // } catch (error) {
+  //   console.error("Failed to initialize Twitter polling:", error);
+  // }
   
   // prefix all routes with /api
   const apiRouter = express.Router();

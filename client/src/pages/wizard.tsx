@@ -37,13 +37,24 @@ export default function Wizard() {
       return;
     }
     
-    if (currentStep === 1 && !walletDetails) {
-      toast({
-        title: "Missing Wallet Details",
-        description: "Please complete the wallet setup form before proceeding.",
-        variant: "destructive",
-      });
-      return;
+    if (currentStep === 1) {
+      if (!walletDetails) {
+        toast({
+          title: "Missing Wallet Details",
+          description: "Please complete the wallet setup form before proceeding.",
+          variant: "destructive",
+        });
+        return;
+      }
+      // Only require privateKey if importing
+      if (walletDetails.type === 'import' && (!walletDetails.privateKey || (walletDetails.privateKey.length !== 64 && walletDetails.privateKey.length !== 88))) {
+        toast({
+          title: "Missing Wallet Details",
+          description: "Please enter a valid private key to import your wallet.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
     
     if (currentStep === 2 && !commandConfig) {

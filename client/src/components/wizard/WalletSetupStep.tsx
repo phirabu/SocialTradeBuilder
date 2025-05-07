@@ -51,6 +51,13 @@ export default function WalletSetupStep() {
     },
   });
   
+  // Ensure walletDetails is set to { type: 'new' } by default
+  useEffect(() => {
+    if (!walletDetails) {
+      updateWalletDetails({ type: 'new' });
+    }
+  }, [walletDetails, updateWalletDetails]);
+  
   // This effect immediately updates the wizard store when form values change
   useEffect(() => {
     // Set up a debounce function to prevent too many updates
@@ -210,7 +217,7 @@ export default function WalletSetupStep() {
                   
                   <div>
                     <p className="text-xs text-text-secondary">Balance</p>
-                    <p className="font-medium text-white">0 SOL (Will be funded from Devnet)</p>
+                    <p className="font-medium text-white">0.1 SOL (Will be funded from Devnet)</p>
                   </div>
                 </div>
               </div>
@@ -226,20 +233,6 @@ export default function WalletSetupStep() {
                   <li>• For production use, consider a proper key management solution</li>
                 </ul>
               </div>
-              
-              {walletType === "new" && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="w-full justify-center mt-4 text-[#14F195] border-[#14F195]/20 hover:bg-[#14F195]/10"
-                  type="button"
-                  onClick={() => {}}
-                  disabled
-                >
-                  <i className="fas fa-coins mr-2"></i>
-                  Will receive 1 SOL from Devnet
-                </Button>
-              )}
             </div>
           </div>
         </div>
