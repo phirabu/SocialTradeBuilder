@@ -14,19 +14,9 @@ const navItems = [
     icon: <i className="fas fa-table-columns w-5 h-5 mr-3"></i> 
   },
   { 
-    name: "Analytics", 
-    path: "/analytics", 
-    icon: <i className="fas fa-chart-line w-5 h-5 mr-3"></i> 
-  },
-  { 
     name: "Twitter Debug", 
     path: "/twitter-debug", 
     icon: <i className="fab fa-twitter w-5 h-5 mr-3"></i> 
-  },
-  { 
-    name: "Settings", 
-    path: "/settings", 
-    icon: <i className="fas fa-gear w-5 h-5 mr-3"></i> 
   },
 ];
 
