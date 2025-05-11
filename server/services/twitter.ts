@@ -263,6 +263,13 @@ export function formatInvalidCommandReply(error: string): string {
  */
 export async function getLatestUserTweet(username: string): Promise<TweetV2 | null> {
   try {
+    // Sanitize username - remove @ if present and validate format
+    username = username.replace(/^@/, '');
+    if (!username.match(/^[A-Za-z0-9_]{1,15}$/)) {
+      console.log(`[TWITTER] Invalid username format: ${username}`);
+      return null;
+    }
+    
     // Use REST client for fetching tweets
     const twitterClient = getRestClient();
     
@@ -275,7 +282,7 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
 
     // Get latest tweet
     const tweets = await twitterClient.v2.userTimeline(user.data.id, {
-      max_results: 1,
+      max_results: 5,
       exclude: ['replies', 'retweets'],
       'tweet.fields': ['created_at', 'text', 'author_id']
     });
