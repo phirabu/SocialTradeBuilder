@@ -35,6 +35,18 @@ export default function TwitterDebugPage() {
     fetchBots();
   }, []);
 
+  // Calculate time remaining until rate limit reset
+  const getRateLimitTimeRemaining = (resetTimestamp: number): string => {
+    const now = Math.floor(Date.now() / 1000);
+    const remaining = resetTimestamp - now;
+    
+    if (remaining <= 0) return "Rate limit expired";
+    
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    return `${minutes}m ${seconds}s remaining`;
+  };
+
   // Fetch the latest tweet for the selected bot
   const fetchLatestTweet = async () => {
     if (!selectedBotId) {
@@ -65,9 +77,10 @@ export default function TwitterDebugPage() {
           setRateLimitReset(data.rateLimitReset || null);
           if (data.rateLimitReset) {
             const resetTime = new Date(data.rateLimitReset * 1000).toLocaleString();
-            errorMsg += ` (Rate limit reached. Try again after ${resetTime})`;
+            const timeRemaining = getRateLimitTimeRemaining(data.rateLimitReset);
+            errorMsg = `Rate limit reached (${timeRemaining})\nReset at: ${resetTime}`;
           } else {
-            errorMsg += " (Rate limit reached.)";
+            errorMsg = "Rate limit reached. Please try again later.";
           }
         }
         setError(errorMsg);
@@ -84,6 +97,12 @@ export default function TwitterDebugPage() {
       }
 
       setLatestTweet(data);
+      
+      // Clear any existing rate limit error
+      if (rateLimitReset) {
+        setRateLimitReset(null);
+        setError(null);
+      }
     } catch (error: any) {
       setError(error.message || "Failed to fetch tweet");
     } finally {

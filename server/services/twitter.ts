@@ -1,6 +1,24 @@
 import crypto from 'crypto';
 import { TwitterApi, TweetV2, TwitterApiReadWrite, TwitterApiReadOnly } from 'twitter-api-v2';
 
+// Type for rate-limited endpoints
+type TwitterEndpoint = 'userTimeline' | 'userLookup' | 'search_recent';
+
+// Separate caches for tweets and rate limits
+const tweetCache: Record<string, { tweet: TweetV2, timestamp: number }> = {};
+const rateLimitState: Record<TwitterEndpoint, { reset: number, isLimited: boolean }> = {
+  userTimeline: { reset: 0, isLimited: false },
+  userLookup: { reset: 0, isLimited: false },
+  search_recent: { reset: 0, isLimited: false }
+};
+
+// Cache TTL constants
+const USER_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const TWEET_CACHE_TTL = 60 * 1000; // 1 minute
+
+// Cache for user IDs to avoid repeated lookups
+const userIdCache: Record<string, string> = {};
+
 // Create a singleton REST API client
 let restClient: TwitterApiReadOnly | null = null;
 
@@ -259,44 +277,68 @@ export function formatInvalidCommandReply(error: string): string {
 }
 
 /**
+ * Check if a particular Twitter API endpoint is rate limited
+ */
+function isRateLimited(endpoint: TwitterEndpoint): boolean {
+  const now = Date.now() / 1000;
+  const limitInfo = rateLimitState[endpoint];
+
+  if (limitInfo && limitInfo.isLimited) {
+    if (now < limitInfo.reset) {
+      const timeRemaining = Math.ceil(limitInfo.reset - now);
+      console.log(`[TWITTER] Rate limit for ${endpoint} still active. Resets in ${timeRemaining} seconds`);
+      return true;
+    }
+    rateLimitState[endpoint].isLimited = false;
+  }
+
+  return false;
+}
+
+/**
+ * Update rate limit information for a Twitter API endpoint
+ */
+function updateRateLimit(endpoint: TwitterEndpoint, reset: number, isLimited: boolean): void {
+  rateLimitState[endpoint] = { reset, isLimited };
+
+  if (isLimited) {
+    const resetDate = new Date(reset * 1000);
+    console.log(`[TWITTER] Rate limit for ${endpoint} reached. Resets at ${resetDate.toISOString()}`);
+  }
+}
+
+/**
  * Get the latest tweet from a user
  */
-// Cache for user IDs to avoid repeated lookups
-const userIdCache: Record<string, string> = {};
-const USER_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const TWEET_CACHE_TTL = 60 * 1000; // 1 minute
-
 export async function getLatestUserTweet(username: string): Promise<TweetV2 | null> {
   try {
-    // Sanitize username - remove @ if present and validate format
     username = username.replace(/^@/, '');
     if (!username.match(/^[A-Za-z0-9_]{1,15}$/)) {
       console.log(`[TWITTER] Invalid username format: ${username}`);
       return null;
     }
 
-    const tweetCacheKey = `twitter_latest_${username}`;
-    
-    // Check tweet cache first
-    const cachedTweet = rateLimits[tweetCacheKey]?.data;
-    if (cachedTweet && Date.now() - rateLimits[tweetCacheKey].timestamp < TWEET_CACHE_TTL) {
+    const cacheKey = `twitter_latest_${username}`;
+
+    // Check tweet cache
+    const cachedData = tweetCache[cacheKey];
+    if (cachedData && (Date.now() - cachedData.timestamp) < TWEET_CACHE_TTL) {
       console.log(`[TWITTER] Using cached tweet for ${username}`);
-      return cachedTweet;
+      return cachedData.tweet;
     }
 
-    // Check if we're rate limited for user timeline
+    // Check rate limits
     if (isRateLimited('userTimeline')) {
-      const limitInfo = rateLimits['userTimeline'];
+      const limitInfo = rateLimitState['userTimeline'];
       const resetTime = new Date(limitInfo.reset * 1000).toLocaleString();
       throw new Error(`Rate limited until ${resetTime}`);
     }
 
     const twitterClient = getRestClient();
-    
+
     // Get user ID (from cache or API)
     let userId = userIdCache[username];
     if (!userId) {
-      console.log(`[TWITTER] Fetching user ID for ${username}`);
       if (isRateLimited('userLookup')) {
         throw new Error('Rate limited for user lookups');
       }
@@ -305,10 +347,8 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
         "user.fields": ["id"]
       });
 
-      if (userResponse.rateLimit) {
-        if (userResponse.rateLimit.remaining <= 1) {
-          updateRateLimit('userLookup', userResponse.rateLimit.reset, true);
-        }
+      if (userResponse.rateLimit && userResponse.rateLimit.remaining <= 1) {
+        updateRateLimit('userLookup', userResponse.rateLimit.reset, true);
       }
 
       if (!userResponse.data) {
@@ -320,110 +360,51 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
       userIdCache[username] = userId;
     }
 
-    // Fetch latest tweet using userTimeline endpoint
+    // Fetch latest tweet
     const timeline = await twitterClient.v2.userTimeline(userId, {
-      max_results: 5, // Minimum value that still works efficiently
+      max_results: 5,
       exclude: ['replies', 'retweets'],
       'tweet.fields': ['created_at', 'text']
     });
 
-    // Handle rate limits for timeline endpoint
-    if (timeline.rateLimit) {
-      console.log(`[TWITTER] Timeline rate limits - Remaining: ${timeline.rateLimit.remaining}/${timeline.rateLimit.limit}`);
-      if (timeline.rateLimit.remaining <= 1) {
-        updateRateLimit('userTimeline', timeline.rateLimit.reset, true);
-      }
+    if (timeline.rateLimit && timeline.rateLimit.remaining <= 1) {
+      updateRateLimit('userTimeline', timeline.rateLimit.reset, true);
     }
 
-    if (!timeline.data || !timeline.data.data || timeline.data.data.length === 0) {
+    if (!timeline.data?.data?.length) {
       console.log(`[TWITTER] No tweets found for user: ${username}`);
       return null;
     }
 
     const latestTweet = timeline.data.data[0];
-    
-    // Cache the result
-    rateLimits[tweetCacheKey] = {
-      reset: Math.floor(Date.now()/1000) + TWEET_CACHE_TTL/1000,
-      isRateLimited: false,
-      data: latestTweet,
+
+    // Update cache
+    tweetCache[cacheKey] = {
+      tweet: latestTweet,
       timestamp: Date.now()
     };
 
     return latestTweet;
   } catch (error: any) {
     console.error('[TWITTER] Error fetching latest tweet:', error);
-    
-    // Handle rate limiting
+
     if (error.code === 429) {
-      const resetTime = error.rateLimit?.reset || Math.floor(Date.now()/1000) + 900; // 15 min default
+      const resetTime = error.rateLimit?.reset || Math.floor(Date.now()/1000) + 900;
       updateRateLimit('userTimeline', resetTime, true);
-      throw error;
     }
-    
-    return null;
+
+    throw error;
   }
 }
-
-// Store rate limit information
-export const rateLimits: Record<string, { 
-  reset: number, 
-  isRateLimited: boolean,
-  data?: any,
-  timestamp?: number 
-}> = {};
 
 /**
  * Reset all Twitter rate limits (for testing purposes)
  */
 export function resetRateLimits() {
-  for (const key in rateLimits) {
-    rateLimits[key] = { reset: 0, isRateLimited: false };
+  for (const key in rateLimitState) {
+    rateLimitState[key] = { reset: 0, isLimited: false };
   }
   console.log(`[TWITTER] Rate limits reset for all endpoints`);
-}
-
-/**
- * Check if a particular Twitter API endpoint is rate limited
- * @param endpoint The API endpoint to check (e.g., 'search', 'userByUsername')
- * @returns Whether the endpoint is currently rate limited
- */
-function isRateLimited(endpoint: string): boolean {
-  const now = Date.now() / 1000; // Current time in seconds
-  const limitInfo = rateLimits[endpoint];
-  
-  if (limitInfo && limitInfo.isRateLimited) {
-    // If we're still within the rate limit window, return true
-    if (now < limitInfo.reset) {
-      const timeRemaining = Math.ceil(limitInfo.reset - now);
-      console.log(`[TWITTER] Rate limit for ${endpoint} still active. Resets in ${timeRemaining} seconds`);
-      return true;
-    } else {
-      // Reset rate limit since the window has passed
-      rateLimits[endpoint].isRateLimited = false;
-      return false;
-    }
-  }
-  
-  return false;
-}
-
-/**
- * Update rate limit information for a Twitter API endpoint
- * @param endpoint The API endpoint
- * @param reset When the rate limit resets (in seconds since epoch)
- * @param isLimited Whether the endpoint is currently rate limited
- */
-function updateRateLimit(endpoint: string, reset: number, isLimited: boolean): void {
-  rateLimits[endpoint] = {
-    reset,
-    isRateLimited: isLimited
-  };
-  
-  if (isLimited) {
-    const resetDate = new Date(reset * 1000);
-    console.log(`[TWITTER] Rate limit for ${endpoint} reached. Resets at ${resetDate.toISOString()}`);
-  }
 }
 
 /**
@@ -436,7 +417,7 @@ function handleTwitterError(error: any, endpoint: string): void {
   
   // Check if this is a rate limit error
   if (error.code === 429 && error.rateLimit) {
-    updateRateLimit(endpoint, error.rateLimit.reset, true);
+    updateRateLimit(endpoint as TwitterEndpoint, error.rateLimit.reset, true);
   }
 }
 
