@@ -261,19 +261,13 @@ export function formatInvalidCommandReply(error: string): string {
 /**
  * Get the latest tweet from a user
  */
+// Cache for user IDs to avoid repeated lookups
+const userIdCache: Record<string, string> = {};
+const USER_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const TWEET_CACHE_TTL = 60 * 1000; // 1 minute
+
 export async function getLatestUserTweet(username: string): Promise<TweetV2 | null> {
   try {
-    // Cache key for this username
-    const cacheKey = `twitter_latest_${username}`;
-    const cacheTTL = 60 * 1000; // 1 minute cache
-    
-    // Check cache first
-    const cached = rateLimits[cacheKey]?.data;
-    if (cached && Date.now() - rateLimits[cacheKey].timestamp < cacheTTL) {
-      console.log(`[TWITTER] Using cached data for ${username}`);
-      return cached;
-    }
-
     // Sanitize username - remove @ if present and validate format
     username = username.replace(/^@/, '');
     if (!username.match(/^[A-Za-z0-9_]{1,15}$/)) {
@@ -281,38 +275,82 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
       return null;
     }
 
-    // Check if we're rate limited
+    const tweetCacheKey = `twitter_latest_${username}`;
+    
+    // Check tweet cache first
+    const cachedTweet = rateLimits[tweetCacheKey]?.data;
+    if (cachedTweet && Date.now() - rateLimits[tweetCacheKey].timestamp < TWEET_CACHE_TTL) {
+      console.log(`[TWITTER] Using cached tweet for ${username}`);
+      return cachedTweet;
+    }
+
+    // Check if we're rate limited for user timeline
     if (isRateLimited('userTimeline')) {
       const limitInfo = rateLimits['userTimeline'];
       const resetTime = new Date(limitInfo.reset * 1000).toLocaleString();
       throw new Error(`Rate limited until ${resetTime}`);
     }
-    
-    // Use REST client for fetching tweets
+
     const twitterClient = getRestClient();
     
-    // Get user ID and timeline in one request using expansions
-    const tweets = await twitterClient.v2.search(`from:${username}`, {
-      max_results: 5,
-      'tweet.fields': ['created_at', 'text', 'author_id'],
-      expansions: ['author_id'],
-      'user.fields': ['username']
+    // Get user ID (from cache or API)
+    let userId = userIdCache[username];
+    if (!userId) {
+      console.log(`[TWITTER] Fetching user ID for ${username}`);
+      if (isRateLimited('userLookup')) {
+        throw new Error('Rate limited for user lookups');
+      }
+
+      const userResponse = await twitterClient.v2.userByUsername(username, {
+        "user.fields": ["id"]
+      });
+
+      if (userResponse.rateLimit) {
+        if (userResponse.rateLimit.remaining <= 1) {
+          updateRateLimit('userLookup', userResponse.rateLimit.reset, true);
+        }
+      }
+
+      if (!userResponse.data) {
+        console.log(`[TWITTER] User not found: ${username}`);
+        return null;
+      }
+
+      userId = userResponse.data.id;
+      userIdCache[username] = userId;
+    }
+
+    // Fetch latest tweet using userTimeline endpoint
+    const timeline = await twitterClient.v2.userTimeline(userId, {
+      max_results: 5, // Minimum value that still works efficiently
+      exclude: ['replies', 'retweets'],
+      'tweet.fields': ['created_at', 'text']
     });
 
-    // Check rate limits from response
-    if (tweets.rateLimit) {
-      console.log(`[TWITTER] Rate limits - Remaining: ${tweets.rateLimit.remaining}/${tweets.rateLimit.limit}`);
-      if (tweets.rateLimit.remaining <= 1) { // Keep buffer of 1
-        updateRateLimit('userTimeline', tweets.rateLimit.reset, true);
+    // Handle rate limits for timeline endpoint
+    if (timeline.rateLimit) {
+      console.log(`[TWITTER] Timeline rate limits - Remaining: ${timeline.rateLimit.remaining}/${timeline.rateLimit.limit}`);
+      if (timeline.rateLimit.remaining <= 1) {
+        updateRateLimit('userTimeline', timeline.rateLimit.reset, true);
       }
     }
 
-    if (!tweets.data.data || tweets.data.data.length === 0) {
+    if (!timeline.data || !timeline.data.data || timeline.data.data.length === 0) {
       console.log(`[TWITTER] No tweets found for user: ${username}`);
       return null;
     }
 
-    return tweets.data.data[0];
+    const latestTweet = timeline.data.data[0];
+    
+    // Cache the result
+    rateLimits[tweetCacheKey] = {
+      reset: Math.floor(Date.now()/1000) + TWEET_CACHE_TTL/1000,
+      isRateLimited: false,
+      data: latestTweet,
+      timestamp: Date.now()
+    };
+
+    return latestTweet;
   } catch (error: any) {
     console.error('[TWITTER] Error fetching latest tweet:', error);
     
