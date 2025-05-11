@@ -185,21 +185,36 @@ export async function replyWithTradeSuccess(
   inAmount: string,
   outAmount: string,
   transactionSignature: string,
-  explorerUrl: string
+  explorerUrl: string,
+  success: boolean = true,
+  errorMessage?: string
 ): Promise<TweetV2 | null> {
-  const message = formatTradeReply(
-    botName,
-    ownerHandle,
-    action,
-    inToken,
-    outToken,
-    inAmount,
-    outAmount,
-    transactionSignature,
-    explorerUrl
-  );
-  
-  return await postTweet(message, tweetId);
+  try {
+    console.log(`[TWITTER] Replying to tweet ${tweetId} with trade ${success ? 'success' : 'failure'} message`);
+    
+    const message = formatTradeReply(
+      botName,
+      ownerHandle,
+      action,
+      inToken,
+      outToken,
+      inAmount,
+      outAmount,
+      transactionSignature,
+      explorerUrl,
+      success,
+      errorMessage
+    );
+
+    const twitterClient = initializeTwitterClient();
+    const response = await twitterClient.v2.reply(message, tweetId);
+    console.log(`[TWITTER] Reply posted successfully: ${response.data.id}`);
+    
+    return response.data;
+  } catch (error) {
+    console.error('[TWITTER] Error posting reply:', error);
+    return null;
+  }
 }
 
 /**

@@ -1354,20 +1354,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const bot = await storage.getBotById(trade.botId);
           const botName = bot?.name || "TradeBot";
 
-          // Format a reply (for API response)
+          // Reply to the original tweet with success message
+          if (trade.tweetId) {
+            const reply = await replyWithTradeSuccess(
+              trade.tweetId,
+              botName,
+              trade.authorUsername || "user",
+              trade.action,
+              trade.inToken,
+              trade.outToken,
+              formattedInAmount,
+              formattedOutAmount,
+              swapResult.signature!,
+              explorerUrl,
+              true
+            );
+            console.log(`[TWITTER] Reply posted to tweet ${trade.tweetId}:`, reply);
+          }
+
+          // Format reply for API response
           twitterReply = formatTradeReply(
             botName,
-            "user", // Should be replaced with actual owner handle in production
+            trade.authorUsername || "user",
             trade.action,
             trade.inToken,
             trade.outToken,
             formattedInAmount,
             formattedOutAmount,
             swapResult.signature!,
-            explorerUrl
+            explorerUrl,
+            true
           );
 
-          // Post a tweet notification about the successful trade
+          // Post a notification tweet as well
           await postTradeNotification(
             botName,
             "user", // Should be replaced with actual owner handle in production
