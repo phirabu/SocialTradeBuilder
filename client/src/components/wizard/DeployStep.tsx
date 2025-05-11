@@ -278,7 +278,7 @@ export default function DeployStep() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-text-secondary">Initial Funding:</span>
-                  <span className="text-sm">1 SOL (Devnet)</span>
+                  <span className="text-sm">0.1 SOL (Devnet)</span>
                 </div>
               </div>
             </div>
