@@ -1,36 +1,64 @@
-import React, { useState } from "react";
+
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+type Bot = {
+  id: number;
+  twitterUsername: string;
+};
 
 export default function TwitterDebugPage() {
   const { toast } = useToast();
-  const [botUsername, setBotUsername] = useState("");
+  const [selectedBotId, setSelectedBotId] = useState<string>("");
+  const [bots, setBots] = useState<Bot[]>([]);
   const [latestTweet, setLatestTweet] = useState<any>(null);
   const [isLoadingTweet, setIsLoadingTweet] = useState(false);
   const [isExecutingTrade, setIsExecutingTrade] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rateLimitReset, setRateLimitReset] = useState<number | null>(null);
 
-  // Fetch the latest tweet for the entered bot username
+  // Fetch bots on component mount
+  useEffect(() => {
+    const fetchBots = async () => {
+      try {
+        const response = await fetch('/api/bots');
+        const data = await response.json();
+        setBots(data.bots);
+      } catch (error) {
+        console.error('Failed to fetch bots:', error);
+      }
+    };
+    fetchBots();
+  }, []);
+
+  // Fetch the latest tweet for the selected bot
   const fetchLatestTweet = async () => {
-    if (!botUsername) {
+    if (!selectedBotId) {
       toast({
-        title: "Missing Bot Username",
-        description: "Please enter the bot's Twitter username.",
+        title: "No Bot Selected",
+        description: "Please select a bot first.",
         variant: "destructive"
       });
       return;
     }
+
+    const selectedBot = bots.find(bot => bot.id.toString() === selectedBotId);
+    if (!selectedBot) return;
+
     setIsLoadingTweet(true);
     setLatestTweet(null);
     setError(null);
     setRateLimitReset(null);
+
     try {
-      const url = `/api/twitter/latest-tweet?username=${encodeURIComponent(botUsername)}`;
+      const url = `/api/twitter/latest-tweet?username=${encodeURIComponent(selectedBot.twitterUsername)}`;
       const response = await fetch(url);
       const data = await response.json();
+      
       if (!response.ok) {
         let errorMsg = data.message || "Failed to fetch latest tweet";
         if (data.error === "rate_limited") {
@@ -41,14 +69,20 @@ export default function TwitterDebugPage() {
           } else {
             errorMsg += " (Rate limit reached.)";
           }
-        } else if (data.error === "missing_credentials") {
-          errorMsg = "Twitter API credentials are missing on the server.";
-        } else if (data.error === "not_found") {
-          errorMsg = "No tweet found or user does not exist.";
         }
         setError(errorMsg);
         return;
       }
+
+      // Update tweet with bot ID
+      if (data && !data.botId) {
+        await fetch(`/api/tweets/${data.id}/update-bot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botId: parseInt(selectedBotId) })
+        });
+      }
+
       setLatestTweet(data);
     } catch (error: any) {
       setError(error.message || "Failed to fetch tweet");
@@ -57,38 +91,43 @@ export default function TwitterDebugPage() {
     }
   };
 
-  // Execute a trade with the bot
+  // Execute a trade for the selected bot
   const executeTrade = async () => {
-    if (!botUsername) {
+    if (!selectedBotId || !latestTweet) {
       toast({
-        title: "Missing Bot Username",
-        description: "Please enter the bot's Twitter username.",
+        title: "Missing Requirements",
+        description: "Please select a bot and fetch a tweet first.",
         variant: "destructive"
       });
       return;
     }
+
     setIsExecutingTrade(true);
     try {
-      const tweetText = `@${botUsername} swap 0.01 SOL for JUP`;
       const response = await fetch('/api/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          botId: null, // backend should resolve by username
-          tweetId: "debug_" + Date.now(),
-          tweetText,
-          twitterUsername: "debug_user"
+          botId: parseInt(selectedBotId),
+          tweetId: latestTweet.tweetId,
+          tweetText: latestTweet.tweetText,
+          twitterUsername: latestTweet.authorUsername
         })
       });
+
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.twitterReply || data.message || "Error processing trade");
       }
+
       toast({
         title: data.success ? "Trade Executed" : "Trade Failed",
         description: data.twitterReply || "Trade processed.",
         variant: data.success ? "default" : "destructive"
       });
+
+      // Refresh the tweet to show updated status
+      await fetchLatestTweet();
     } catch (error: any) {
       toast({
         title: "Trade Error",
@@ -100,16 +139,6 @@ export default function TwitterDebugPage() {
     }
   };
 
-  // Helper for rate limit countdown
-  const getRateLimitCountdown = () => {
-    if (!rateLimitReset) return null;
-    const seconds = Math.max(0, Math.floor(rateLimitReset - Date.now() / 1000));
-    if (seconds > 0) {
-      return `Try again in ${seconds} seconds.`;
-    }
-    return null;
-  };
-
   return (
     <div className="container mx-auto py-8 px-4 max-w-xl">
       <Card>
@@ -118,26 +147,38 @@ export default function TwitterDebugPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
-            <Input
-              id="bot-username"
-              value={botUsername}
-              onChange={e => setBotUsername(e.target.value)}
-              placeholder="Enter bot Twitter username (e.g. tradebot)"
-              prefix="@"
-              autoFocus
-            />
-            <Button onClick={fetchLatestTweet} disabled={isLoadingTweet}>
+            <Select value={selectedBotId} onValueChange={setSelectedBotId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a bot" />
+              </SelectTrigger>
+              <SelectContent>
+                {bots.map((bot) => (
+                  <SelectItem key={bot.id} value={bot.id.toString()}>
+                    @{bot.twitterUsername} (ID: {bot.id})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {selectedBotId && (
+              <div className="text-sm text-muted-foreground mt-1">
+                Selected Bot ID: {selectedBotId}
+              </div>
+            )}
+
+            <Button onClick={fetchLatestTweet} disabled={isLoadingTweet || !selectedBotId}>
               {isLoadingTweet ? "Fetching..." : "Fetch Tweets"}
             </Button>
           </div>
 
-          {/* Error message UI */}
           {error && (
             <div className="bg-red-900/80 text-red-200 rounded-md p-4 text-center flex flex-col items-center">
               <div className="font-semibold">Error</div>
               <div className="text-sm mt-1">{error}</div>
               {rateLimitReset && (
-                <div className="text-xs mt-2">{getRateLimitCountdown()}</div>
+                <div className="text-xs mt-2">
+                  Reset at: {new Date(rateLimitReset * 1000).toLocaleString()}
+                </div>
               )}
               <Button variant="outline" className="mt-3" onClick={fetchLatestTweet} disabled={isLoadingTweet}>
                 Retry
@@ -145,7 +186,6 @@ export default function TwitterDebugPage() {
             </div>
           )}
 
-          {/* Always show tweet/instruction window */}
           <div className="p-4 bg-muted/50 rounded-md min-h-[80px] flex flex-col justify-center">
             {isLoadingTweet ? (
               <div className="text-center text-sm text-muted-foreground">Loading latest tweet...</div>
@@ -172,14 +212,14 @@ export default function TwitterDebugPage() {
             ) : !error ? (
               <div className="text-center">
                 <div className="text-base font-medium mb-1">No tweet loaded</div>
-                <div className="text-xs text-muted-foreground">Please click the button to fetch latest data.</div>
+                <div className="text-xs text-muted-foreground">Please select a bot and fetch the latest tweet.</div>
               </div>
             ) : null}
           </div>
 
           <Button
             onClick={executeTrade}
-            disabled={isExecutingTrade || !botUsername}
+            disabled={isExecutingTrade || !selectedBotId || !latestTweet}
             className="bg-green-600 hover:bg-green-700 w-full"
           >
             {isExecutingTrade ? "Executing..." : "Execute Trade"}
