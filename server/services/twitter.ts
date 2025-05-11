@@ -269,6 +269,13 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
       console.log(`[TWITTER] Invalid username format: ${username}`);
       return null;
     }
+
+    // Check if we're rate limited
+    if (isRateLimited('userTimeline')) {
+      const limitInfo = rateLimits['userTimeline'];
+      const resetTime = new Date(limitInfo.reset * 1000).toLocaleString();
+      throw new Error(`Rate limited until ${resetTime}`);
+    }
     
     // Use REST client for fetching tweets
     const twitterClient = getRestClient();
@@ -293,8 +300,16 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
     }
 
     return tweets.data.data[0];
-  } catch (error) {
+  } catch (error: any) {
     console.error('[TWITTER] Error fetching latest tweet:', error);
+    
+    // Handle rate limiting
+    if (error.code === 429) {
+      const resetTime = error.rateLimit?.reset || Math.floor(Date.now()/1000) + 900; // 15 min default
+      updateRateLimit('userTimeline', resetTime, true);
+      throw error;
+    }
+    
     return null;
   }
 }
