@@ -413,8 +413,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }
 
-      if (forceRefresh || !latestTweet || new Date(latestTweet.createdAt) < fiveMinutesAgo) {
-        console.log(`[DEBUG] Fetching latest tweet for user @${username} (force: ${forceRefresh})`);
+      // Always attempt to fetch the latest tweet
+      console.log(`[DEBUG] Fetching latest tweet for user @${username}`);
         try {
           const tweet = await getLatestUserTweet(username);
           if (tweet) {
