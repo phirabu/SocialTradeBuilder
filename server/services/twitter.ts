@@ -263,6 +263,17 @@ export function formatInvalidCommandReply(error: string): string {
  */
 export async function getLatestUserTweet(username: string): Promise<TweetV2 | null> {
   try {
+    // Cache key for this username
+    const cacheKey = `twitter_latest_${username}`;
+    const cacheTTL = 60 * 1000; // 1 minute cache
+    
+    // Check cache first
+    const cached = rateLimits[cacheKey]?.data;
+    if (cached && Date.now() - rateLimits[cacheKey].timestamp < cacheTTL) {
+      console.log(`[TWITTER] Using cached data for ${username}`);
+      return cached;
+    }
+
     // Sanitize username - remove @ if present and validate format
     username = username.replace(/^@/, '');
     if (!username.match(/^[A-Za-z0-9_]{1,15}$/)) {
@@ -280,19 +291,12 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
     // Use REST client for fetching tweets
     const twitterClient = getRestClient();
     
-    // Get user ID from username
-    const user = await twitterClient.v2.userByUsername(username);
-    if (!user.data) {
-      console.log(`[TWITTER] User not found: ${username}`);
-      return null;
-    }
-
-    // Get latest tweet - using pagination to get just one
-    const tweets = await twitterClient.v2.userTimeline(user.data.id, {
-      max_results: 5, // Minimum allowed by API
-      exclude: ['replies', 'retweets'],
+    // Get user ID and timeline in one request using expansions
+    const tweets = await twitterClient.v2.search(`from:${username}`, {
+      max_results: 5,
       'tweet.fields': ['created_at', 'text', 'author_id'],
-      pagination_token: undefined // Ensure no pagination
+      expansions: ['author_id'],
+      'user.fields': ['username']
     });
 
     // Check rate limits from response
@@ -324,7 +328,12 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
 }
 
 // Store rate limit information
-export const rateLimits: Record<string, { reset: number, isRateLimited: boolean }> = {};
+export const rateLimits: Record<string, { 
+  reset: number, 
+  isRateLimited: boolean,
+  data?: any,
+  timestamp?: number 
+}> = {};
 
 /**
  * Reset all Twitter rate limits (for testing purposes)
