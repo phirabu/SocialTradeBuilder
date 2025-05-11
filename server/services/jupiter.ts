@@ -218,15 +218,29 @@ export async function executeJupiterSwap(
       }
     } 
     else {
-      // For simulated swaps, just do a simple SOL transfer
-      console.log(`[SWAP] Creating simulated swap transaction (SOL self-transfer)`);
-      transaction.add(
-        web3.SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: keypair.publicKey, // Send back to self
-          lamports: 100000, // Very small amount (0.0001 SOL)
-        })
-      );
+      // For simulated swaps, transfer the actual amount if SOL is involved
+      console.log(`[SWAP] Creating simulated swap transaction`);
+      if (inputToken === 'SOL') {
+        // When selling SOL, send the actual amount
+        const lamports = Math.floor(amount * web3.LAMPORTS_PER_SOL);
+        console.log(`[SWAP] Sending ${lamports} lamports (${amount} SOL)`);
+        transaction.add(
+          web3.SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: keypair.publicKey, // Send to self to simulate the swap
+            lamports,
+          })
+        );
+      } else if (outputToken === 'SOL') {
+        // When buying SOL, send a small amount to create the transaction
+        transaction.add(
+          web3.SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: keypair.publicKey,
+            lamports: 100000, // 0.0001 SOL for the transaction
+          })
+        );
+      }
     }
     
     // Add a memo instruction if the memo program is available

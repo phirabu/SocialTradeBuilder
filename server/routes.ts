@@ -959,23 +959,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Update wallet and token balances
         setTimeout(async () => {
           try {
+            // Get current SOL balance from blockchain
+            const currentBalance = await getWalletBalance(wallet.publicKey);
+            
+            // Calculate new balances based on the trade
+            let finalSolBalance = parseFloat(currentBalance);
+            
+            if (trade.inToken === 'SOL') {
+              // When selling SOL, subtract the amount plus fee
+              const totalDeduction = parseFloat(trade.amount) + parseFloat(config.transactionFee);
+              console.log(`[BALANCE] Deducting ${totalDeduction} SOL (${trade.amount} + ${config.transactionFee} fee)`);
+              finalSolBalance = Math.max(0, finalSolBalance);
+            } else if (trade.outToken === 'SOL') {
+              // When buying SOL, add the received amount minus fee
+              const netAddition = parseFloat(swapResult.outputAmount || "0") - parseFloat(config.transactionFee);
+              console.log(`[BALANCE] Adding ${netAddition} SOL (${swapResult.outputAmount} - ${config.transactionFee} fee)`);
+              finalSolBalance = Math.max(0, finalSolBalance);
+            } else {
+              // When swapping tokens, just deduct the fee
+              finalSolBalance = Math.max(0, finalSolBalance - parseFloat(config.transactionFee));
+              console.log(`[BALANCE] Deducting ${config.transactionFee} SOL fee`);
+            }
+            
             // Update SOL balance
-            const balance = await getWalletBalance(wallet.publicKey);
-            await storage.updateWalletBalance(wallet.id, balance);
+            await storage.updateWalletBalance(wallet.id, finalSolBalance.toFixed(6));
+            console.log(`[BALANCE] Updated SOL balance to ${finalSolBalance.toFixed(6)}`);
 
-            // Update token balances for the input and output tokens
+            // Update token balances
             if (trade.inToken !== 'SOL') {
-              // Decrement input token balance (if not SOL)
+              // Set input token balance to 0 since we're simulating
               await storage.upsertTokenBalance(wallet.id, trade.inToken, "0");
+              console.log(`[BALANCE] Reset ${trade.inToken} balance to 0`);
             }
 
             if (trade.outToken !== 'SOL') {
-              // Increment output token balance (if not SOL)
+              // Add received tokens to balance
               const outAmount = swapResult.outputAmount || "0";
               const existingBalance = await storage.getTokenBalance(wallet.id, trade.outToken);
               const newBalance = existingBalance 
                 ? (parseFloat(existingBalance.balance) + parseFloat(outAmount)).toString()
                 : outAmount;
+              console.log(`[BALANCE] Updated ${trade.outToken} balance to ${newBalance}`);
 
               await storage.upsertTokenBalance(wallet.id, trade.outToken, newBalance);
               console.log(`Updated ${trade.outToken} balance to ${newBalance}`);
