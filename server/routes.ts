@@ -431,9 +431,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errorToReturn = { error: "not_found", message: "No tweet found or user does not exist." };
         }
       } catch (error: any) {
-          const tweet = await getLatestUserTweet(username);
-          if (tweet) {
-            console.log(`[DEBUG] Got tweet from Twitter API - ID: ${tweet.id}, Text: ${tweet.text}`);
+        console.error("Twitter API error:", error);
+        // Rate limit error
+        if (error.code === 429) {
+          return res.status(429).json({
+            error: "rate_limited",
+            message: error.message || "Twitter API rate limit reached. Please try again later.",
+            rateLimitReset: error.rateLimit?.reset
+          });
+        }
+        // Missing credentials
+        if (error.message && error.message.includes("Missing TWITTER_BEARER_TOKEN")) {
+          return res.status(503).json({
+            error: "missing_credentials",
+            message: "Twitter API credentials are missing on the server."
+          });
+        }
+        // Unknown error
+        return res.status(500).json({
+          error: "unknown",
+          message: error.message || "Unknown error occurred."
+        });
+      }
             const existingTweet = await storage.getTweetByTweetId(tweet.id);
             if (!existingTweet) {
               let botId = null;
