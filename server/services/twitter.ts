@@ -1,6 +1,22 @@
 import crypto from 'crypto';
 import { TwitterApi, TweetV2, TwitterApiReadWrite, TwitterApiReadOnly } from 'twitter-api-v2';
 
+// Create a singleton REST API client
+let restClient: TwitterApiReadOnly | null = null;
+
+/**
+ * Get the REST API client instance
+ */
+function getRestClient(): TwitterApiReadOnly {
+  if (!restClient) {
+    if (!process.env.TWITTER_BEARER_TOKEN) {
+      throw new Error('Missing TWITTER_BEARER_TOKEN');
+    }
+    restClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN).readOnly;
+  }
+  return restClient;
+}
+
 /**
  * Initialize a TwitterApi client for a bot
  * In production, each bot would have its own credentials
@@ -29,6 +45,21 @@ export function initializeTwitterClient(): TwitterApiReadWrite {
   });
 
   return twitterClient.readWrite;
+}
+
+/**
+ * Initialize a read-only TwitterApi client for fetching tweets
+ * This client doesn't need write permissions and won't try to use WebSocket connections
+ */
+export function initializeReadOnlyTwitterClient(): TwitterApiReadOnly {
+  // Check if we have the required environment variables
+  if (!process.env.TWITTER_BEARER_TOKEN) {
+    throw new Error('Missing TWITTER_BEARER_TOKEN');
+  }
+
+  // Initialize the Twitter API client with bearer token
+  const twitterClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN);
+  return twitterClient.readOnly;
 }
 
 /**
@@ -228,73 +259,35 @@ export function formatInvalidCommandReply(error: string): string {
 }
 
 /**
- * Get the latest tweet from a specific Twitter user
- * @param username Twitter username (without @)
- * @returns Latest tweet or null if not found
+ * Get the latest tweet from a user
  */
 export async function getLatestUserTweet(username: string): Promise<TweetV2 | null> {
   try {
-    console.log(`[TWITTER] Getting latest tweet for user @${username}`);
+    // Use REST client for fetching tweets
+    const twitterClient = getRestClient();
     
-    // Log current rate limit state
-    if (isRateLimited('user_timeline')) {
-      console.log('[TWITTER] Rate limited for user_timeline, returning null');
-      return null;
-    }
-    
-    // Log missing credentials
-    if (!process.env.TWITTER_BEARER_TOKEN) {
-      console.error('[TWITTER] Missing TWITTER_BEARER_TOKEN environment variable');
-      return null;
-    }
-    
-    // Initialize Twitter client with bearer token for app-only authentication
-    const appOnlyClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN);
-    const readOnlyClient = appOnlyClient.readOnly;
-    
-    // Log before API call
-    console.log(`[TWITTER] Fetching user by username: ${username}`);
-    const user = await readOnlyClient.v2.userByUsername(username);
+    // Get user ID from username
+    const user = await twitterClient.v2.userByUsername(username);
     if (!user.data) {
-      console.log(`[TWITTER] User @${username} not found. API response:`, JSON.stringify(user));
+      console.log(`[TWITTER] User not found: ${username}`);
       return null;
     }
-    
-    // Log user ID
-    console.log(`[TWITTER] User ID for @${username}: ${user.data.id}`);
-    
-    // Log before fetching timeline
-    console.log(`[TWITTER] Fetching timeline for user ID: ${user.data.id}`);
-    const tweets = await readOnlyClient.v2.userTimeline(user.data.id, {
-      max_results: 5,
-      "tweet.fields": ["created_at", "author_id", "conversation_id"],
-      exclude: ["retweets", "replies"]
+
+    // Get latest tweet
+    const tweets = await twitterClient.v2.userTimeline(user.data.id, {
+      max_results: 1,
+      exclude: ['replies', 'retweets'],
+      'tweet.fields': ['created_at', 'text', 'author_id']
     });
-    
-    // Log tweets response
-    console.log(`[TWITTER] Tweets API response:`, JSON.stringify(tweets));
-    
-    // Handle rate limiting
-    if (tweets.rateLimit) {
-      const remainingSeconds = tweets.rateLimit.reset - Math.floor(Date.now()/1000);
-      console.log(`[TWITTER] Rate limit info for user_timeline: ${tweets.rateLimit.limit}/${tweets.rateLimit.remaining} (resets in ${remainingSeconds} seconds)`);
-      if (tweets.rateLimit.remaining <= 5) {
-        updateRateLimit('user_timeline', tweets.rateLimit.reset, true);
-      }
-    }
-    
-    // Log found tweets
-    if (tweets.data && tweets.data.data && tweets.data.data.length > 0) {
-      const latestTweet = tweets.data.data[0];
-      console.log(`[TWITTER] Found latest tweet for @${username}: "${latestTweet.text.substring(0, 50)}..."`);
-      return latestTweet;
-    } else {
-      console.log(`[TWITTER] No tweets found for @${username}`);
+
+    if (!tweets.data.data || tweets.data.data.length === 0) {
+      console.log(`[TWITTER] No tweets found for user: ${username}`);
       return null;
     }
-  } catch (error: any) {
-    console.error(`[TWITTER] Error in getLatestUserTweet for @${username}:`, error && error.stack ? error.stack : error);
-    handleTwitterError(error, 'user_timeline');
+
+    return tweets.data.data[0];
+  } catch (error) {
+    console.error('[TWITTER] Error fetching latest tweet:', error);
     return null;
   }
 }
@@ -387,15 +380,8 @@ export async function getMentions(botTwitterUsername: string, sinceId?: string):
       return [];
     }
     
-    // Check if Twitter Bearer Token is available
-    if (!process.env.TWITTER_BEARER_TOKEN) {
-      console.error('[TWITTER-DEBUG] Missing TWITTER_BEARER_TOKEN environment variable');
-      return [];
-    }
-    
-    console.log('[TWITTER-DEBUG] Creating Twitter API client with bearer token');
-    // Initialize Twitter client with bearer token for app-only authentication
-    const appOnlyClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN!);
+    // Use REST client for fetching mentions
+    const twitterClient = getRestClient();
     
     // Prepare query string - look for mentions of the bot
     // Format: "@botname" -from:botname  (to find mentions but exclude the bot's own tweets)
@@ -419,7 +405,7 @@ export async function getMentions(botTwitterUsername: string, sinceId?: string):
       
       // Use the search endpoint with recent search type
       // This endpoint has a higher rate limit (450 requests/15min)
-      const mentions = await appOnlyClient.v2.search(queryString, queryParams);
+      const mentions = await twitterClient.v2.search(queryString, queryParams);
       
       // If the API returns rate limit info, check and store it
       if (mentions.rateLimit) {
