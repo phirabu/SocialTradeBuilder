@@ -225,28 +225,35 @@ export function formatTradeReply(
   inAmount: string,
   outAmount: string,
   transactionSignature: string,
-  explorerUrl: string
+  explorerUrl: string,
+  success: boolean,
+  errorMessage?: string
 ): string {
-  // Format the transaction signature to be shorter
-  const shortSignature = `${transactionSignature.substring(0, 6)}...`;
-  
   // Start with mentioning the owner
-  let message = `@${ownerHandle} [${botName}] executed `;
+  let message = `@${ownerHandle} `;
   
-  // Add action details
-  if (action === 'buy') {
-    message += `BUY ${outAmount} ${outToken}`;
-  } else if (action === 'sell') {
-    message += `SELL ${inAmount} ${inToken}`;
+  if (success) {
+    // Format the transaction signature to be shorter
+    const shortSignature = `${transactionSignature.substring(0, 6)}...`;
+    
+    // Add successful trade details
+    if (action === 'buy') {
+      message += `✅ Successfully bought ${outAmount} ${outToken} with ${inAmount} ${inToken}`;
+    } else if (action === 'sell') {
+      message += `✅ Successfully sold ${inAmount} ${inToken} for ${outAmount} ${outToken}`;
+    } else {
+      message += `✅ Successfully swapped ${inAmount} ${inToken} for ${outAmount} ${outToken}`;
+    }
+    
+    // Add transaction signature and explorer link
+    message += `\n\nTransaction: ${shortSignature}\nView on Solana Explorer: ${explorerUrl}`;
   } else {
-    message += `SWAP ${inAmount} ${inToken} for ${outAmount} ${outToken}`;
+    // Add failure message
+    message += `❌ Trade failed`;
+    if (errorMessage) {
+      message += `: ${errorMessage}`;
+    }
   }
-  
-  // Add status and signature
-  message += ` – SUCCESS (${shortSignature})`;
-  
-  // Add explorer URL as a separate link to avoid Twitter's link shortening
-  message += `\n\nView on Solana Explorer: ${explorerUrl}`;
   
   return message;
 }

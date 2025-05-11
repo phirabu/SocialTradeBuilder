@@ -139,20 +139,44 @@ export default function TwitterDebugPage() {
         throw new Error(data.twitterReply || data.message || "Error processing trade");
       }
 
+      const toastMessage = data.success
+        ? `Successfully executed trade:\n${data.swap?.inAmount} ${data.trade?.inToken} → ${data.swap?.outAmount} ${data.trade?.outToken}`
+        : `Trade failed: ${data.error || 'Unknown error'}`;
+
       toast({
         title: data.success ? "Trade Executed" : "Trade Failed",
-        description: data.twitterReply || "Trade processed.",
+        description: toastMessage,
         variant: data.success ? "default" : "destructive"
       });
 
-      // Refresh the tweet to show updated status
-      await fetchLatestTweet();
+      if (data.success) {
+        // Show transaction details in UI
+        setLatestTweet(prev => ({
+          ...prev!,
+          processingStatus: 'completed',
+          transactionSignature: data.transaction?.signature,
+          explorerUrl: data.transaction?.explorerUrl,
+          twitterReply: data.twitterReply
+        }));
+      } else {
+        setLatestTweet(prev => ({
+          ...prev!,
+          processingStatus: 'failed',
+          error: data.error
+        }));
+      }
     } catch (error: any) {
       toast({
         title: "Trade Error",
         description: error.message || "Failed to execute trade",
         variant: "destructive"
       });
+      
+      setLatestTweet(prev => ({
+        ...prev!,
+        processingStatus: 'failed',
+        error: error.message
+      }));
     } finally {
       setIsExecutingTrade(false);
     }
