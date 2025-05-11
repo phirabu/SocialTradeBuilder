@@ -384,10 +384,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      let latestTweet = await storage.getLatestTweet();
-      const forceRefresh = req.query.force === 'true';
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      let latestTweet = null;
       let errorToReturn = null;
+
+      try {
+        const tweet = await getLatestUserTweet(username);
+        if (tweet) {
+          latestTweet = {
+            tweetId: tweet.id,
+            tweetText: tweet.text,
+            createdAt: tweet.created_at,
+            processingStatus: 'pending'
+          };
+        }
+      } catch (error: any) {
+        if (error.code === 429) {
+          // Rate limit hit
+          const resetTime = error.rateLimit?.reset || Math.floor(Date.now()/1000) + 900;
+          return res.status(429).json({
+            error: 'rate_limited',
+            message: 'Twitter API rate limit reached',
+            rateLimitReset: resetTime
+          });
+        }
+        errorToReturn = {
+          error: 'twitter_error',
+          message: error.message || 'Failed to fetch tweet'
+        };
+      }
 
       if (forceRefresh || !latestTweet || new Date(latestTweet.createdAt) < fiveMinutesAgo) {
         console.log(`[DEBUG] Fetching latest tweet for user @${username} (force: ${forceRefresh})`);

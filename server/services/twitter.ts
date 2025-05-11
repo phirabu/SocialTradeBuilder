@@ -287,12 +287,21 @@ export async function getLatestUserTweet(username: string): Promise<TweetV2 | nu
       return null;
     }
 
-    // Get latest tweet
+    // Get latest tweet - using pagination to get just one
     const tweets = await twitterClient.v2.userTimeline(user.data.id, {
-      max_results: 5,
+      max_results: 5, // Minimum allowed by API
       exclude: ['replies', 'retweets'],
-      'tweet.fields': ['created_at', 'text', 'author_id']
+      'tweet.fields': ['created_at', 'text', 'author_id'],
+      pagination_token: undefined // Ensure no pagination
     });
+
+    // Check rate limits from response
+    if (tweets.rateLimit) {
+      console.log(`[TWITTER] Rate limits - Remaining: ${tweets.rateLimit.remaining}/${tweets.rateLimit.limit}`);
+      if (tweets.rateLimit.remaining <= 1) { // Keep buffer of 1
+        updateRateLimit('userTimeline', tweets.rateLimit.reset, true);
+      }
+    }
 
     if (!tweets.data.data || tweets.data.data.length === 0) {
       console.log(`[TWITTER] No tweets found for user: ${username}`);
