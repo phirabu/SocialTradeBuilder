@@ -388,6 +388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let errorToReturn = null;
 
       try {
+        console.log(`[DEBUG] Fetching latest tweet for user @${username}`);
         const tweet = await getLatestUserTweet(username);
         if (tweet) {
           latestTweet = {
@@ -396,26 +397,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
             createdAt: tweet.created_at,
             processingStatus: 'pending'
           };
+          
+          console.log(`[DEBUG] Got tweet from Twitter API - ID: ${tweet.id}, Text: ${tweet.text}`);
+          const existingTweet = await storage.getTweetByTweetId(tweet.id);
+          if (!existingTweet) {
+            let botId = null;
+            try {
+              const bots = await storage.listBots();
+              const matchingBot = bots.find(b => 
+                b.twitterUsername.toLowerCase() === username.toLowerCase() || 
+                tweet.text.toLowerCase().includes(`@${b.twitterUsername.toLowerCase()}`)
+              );
+              if (matchingBot) {
+                botId = matchingBot.id;
+                console.log(`Found matching bot ID ${botId} for tweet from ${username}`);
+              }
+            } catch (err) {
+              console.error("Error finding matching bot:", err);
+            }
+            latestTweet = await storage.createTweet({
+              tweetId: tweet.id,
+              tweetText: tweet.text,
+              authorUsername: username,
+              botId: botId,
+              processed: false,
+              processingStatus: "pending"
+            });
+          } else {
+            latestTweet = existingTweet;
+          }
+        } else {
+          // No tweet found, return a structured error
+          errorToReturn = { error: "not_found", message: "No tweet found or user does not exist." };
         }
       } catch (error: any) {
-        if (error.code === 429) {
-          // Rate limit hit
-          const resetTime = error.rateLimit?.reset || Math.floor(Date.now()/1000) + 900;
-          return res.status(429).json({
-            error: 'rate_limited',
-            message: 'Twitter API rate limit reached',
-            rateLimitReset: resetTime
-          });
-        }
-        errorToReturn = {
-          error: 'twitter_error',
-          message: error.message || 'Failed to fetch tweet'
-        };
-      }
-
-      // Always attempt to fetch the latest tweet
-      console.log(`[DEBUG] Fetching latest tweet for user @${username}`);
-        try {
           const tweet = await getLatestUserTweet(username);
           if (tweet) {
             console.log(`[DEBUG] Got tweet from Twitter API - ID: ${tweet.id}, Text: ${tweet.text}`);
