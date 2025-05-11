@@ -1,0 +1,48 @@
+[DEBUG] Fetching latest tweet for user @phirabudigital (force: false)
+[TWITTER] Error fetching latest tweet: ApiResponseError: Request failed with code 429
+    at RequestHandlerHelper.createResponseError (/home/runner/workspace/node_modules/twitter-api-v2/dist/cjs/client-mixins/request-handler.helper.js:104:16)
+    at RequestHandlerHelper.onResponseEndHandler (/home/runner/workspace/node_modules/twitter-api-v2/dist/cjs/client-mixins/request-handler.helper.js:262:25)
+    at Gunzip.emit (node:events:518:28)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  error: true,
+  type: 'response',
+  code: 429,
+  headers: {
+    date: 'Sun, 11 May 2025 08:37:45 GMT',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': '94',
+    connection: 'keep-alive',
+    perf: '7402827104',
+    'set-cookie': [
+      'guest_id=v1%3A174695266578514599; Max-Age=34214400; Expires=Thu, 11 Jun 2026 08:37:45 GMT; Path=/; Domain=.x.com; Secure; SameSite=None',
+      '__cf_bm=ZuZw_Sz.yqsDiNhxDgsG6BLcVN8nXMSZWotzzf2k1zQ-1746952665-1.0.1.1-Nn82YwCP8HATvvYqT7OvBnJzdvkKXkyOJTBJSTab5HNF121S90.hgS9M.EXBmhp_YuaeDuJdY6gfeyEYBTq9EX70YYw2xixzCqnOZfT1jf0; path=/; expires=Sun, 11-May-25 09:07:45 GMT; domain=.x.com; HttpOnly; Secure'
+    ],
+    'api-version': '2.137',
+    'cache-control': 'no-cache, no-store, max-age=0',
+    'x-access-level': 'read',
+    'x-frame-options': 'SAMEORIGIN',
+    'content-encoding': 'gzip',
+    'x-transaction-id': 'fc9881485f2e67ac',
+    'x-xss-protection': '0',
+    'x-rate-limit-limit': '1',
+    'x-rate-limit-reset': '1746953413',
+    'content-disposition': 'attachment; filename=json.json',
+    'x-content-type-options': 'nosniff',
+    'x-rate-limit-remaining': '0',
+    'strict-transport-security': 'max-age=631138519',
+    'x-response-time': '12',
+    'x-connection-hash': '31d240c2f5e90ca2251360b49485b1540f8f8993fdd36368e9c2ac4dcf89e9b7',
+    'cf-cache-status': 'DYNAMIC',
+    vary: 'accept-encoding',
+    server: 'cloudflare tsa_b',
+    'cf-ray': '93e05b311cd8c01d-ATL'
+  },
+  rateLimit: { limit: 1, remaining: 0, reset: 1746953413 },
+  data: {
+    title: 'Too Many Requests',
+    detail: 'Too Many Requests',
+    type: 'about:blank',
+    status: 429
+  }
+}
