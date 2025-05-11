@@ -207,7 +207,12 @@ export async function replyWithTradeSuccess(
     );
 
     const twitterClient = initializeTwitterClient();
-    const response = await twitterClient.v2.reply(message, tweetId);
+    const response = await twitterClient.v2.tweet({
+      text: message,
+      reply: {
+        in_reply_to_tweet_id: tweetId
+      }
+    });
     console.log(`[TWITTER] Reply posted successfully: ${response.data.id}`);
     
     return response.data;
